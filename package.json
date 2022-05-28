@@ -1,0 +1,34 @@
+{
+  "name": "hyper-express-body-parser",
+  "version": "1.0.0",
+  "description": "High performance middleware that implements Express-like body parsing into the HyperExpress webserver.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kartikk221/hyper-express-body-parser.git"
+  },
+  "keywords": [
+    "express",
+    "high",
+    "performance",
+    "body",
+    "parsing",
+    "middleware"
+  ],
+  "author": "kartikk221",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/kartikk221/hyper-express-body-parser/issues"
+  },
+  "homepage": "https://github.com/kartikk221/hyper-express-body-parser#readme",
+  "dependencies": {
+    "bytes": "^3.1.2",
+    "type-is": "^1.6.18"
+  }
+}
