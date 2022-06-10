@@ -29,6 +29,7 @@
   "homepage": "https://github.com/kartikk221/hyper-express-body-parser#readme",
   "dependencies": {
     "bytes": "^3.1.2",
+    "content-type": "^1.0.4",
     "destroy": "^1.2.0",
     "iconv-lite": "^0.6.3",
     "raw-body": "^2.5.1",

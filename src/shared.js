@@ -25,8 +25,8 @@ function validate_request(request, conditions) {
     // Destructure the conditions object with relevant properties
     const { match_type } = conditions;
 
-    // Do not parse the request if it has already been parsed
-    if (request._body === true) return false;
+    // Ensure the request body has not already been received/parsed
+    if (request.received) return false;
 
     // Do not parse the request if there is no body to parse
     if (!type_is.hasBody(request)) return false;
@@ -34,8 +34,6 @@ function validate_request(request, conditions) {
     // Do not parse the request if it doesn't match the appropriate type
     if (!match_type(request)) return false;
 
-    // Mark this request as "parsed" with a boolean flag
-    request._body = true;
     return true;
 }
 
@@ -53,7 +51,6 @@ async function attempt_body_buffer(request, response, conditions) {
     const { inflate, limit, verify_body, base_encoding } = conditions;
 
     // Determine content properties from the request
-    const length = request.headers['content-length'];
     const encoding = (request.headers['content-encoding'] || 'identity').toLowerCase();
 
     // Return an HTTP 415 error as decompression of the incoming encoding is not supported
@@ -93,7 +90,7 @@ async function attempt_body_buffer(request, response, conditions) {
                     raw_body(
                         stream,
                         {
-                            length, // The length of the incoming body data
+                            length: stream.length, // The decoded length of the incoming body
                             limit, // The maximum size of the incoming body data in bytes
                             encoding: typeof verify_body == 'function' ? null : base_encoding,
                         },
@@ -126,30 +123,43 @@ async function attempt_body_buffer(request, response, conditions) {
                         return response.status(400).send();
                 }
             }
+        }
 
-            // Verify the received buffer against the provided verify_body function
-            if (typeof verify_body == 'function' && verify_body(request, response, buffer, encoding) !== true) {
-                // Return an HTTP 403 error as the body verification failed
-                return response.status(403).send();
-            }
+        // Verify the received buffer against the provided verify_body function
+        if (typeof verify_body == 'function' && verify_body(request, response, buffer, encoding) !== true) {
+            // Return an HTTP 403 error as the body verification failed
+            return response.status(403).send();
+        }
 
-            // Decode the buffer from the provided base encoding
-            if (base_encoding) {
-                try {
-                    // Attempt to decode the buffer from the provided base encoding with the iconv-lite module
-                    buffer = iconv.decode(buffer, base_encoding);
-                } catch (error) {
-                    // Return an HTTP 400 error as the encoding parsing failed
-                    return response.status(400).send();
-                }
+        // Decode the buffer from the provided base encoding
+        if (base_encoding) {
+            try {
+                // Attempt to decode the buffer from the provided base encoding with the iconv-lite module
+                buffer = iconv.decode(buffer, base_encoding);
+            } catch (error) {
+                // Return an HTTP 400 error as the encoding parsing failed
+                return response.status(400).send();
             }
         }
 
         return buffer;
+    } else {
+        // Hold execution till we have successfully ended the request with a 413 status code
+        await new Promise((resolve) =>
+            request.on('limit', (bytes, flushed) => {
+                // Ensure the body has been completely flushed
+                // Ensure the response has not already been initiated
+                if (flushed && !response.initiated) {
+                    // Send an HTTP 413 status code to the client signifying that the request body is too large
+                    response.status(413).send();
+                    resolve();
+                }
+            })
+        );
     }
 }
 
 module.exports = {
     validate_request,
-    get_body_buffer,
+    attempt_body_buffer,
 };
