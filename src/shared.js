@@ -4,6 +4,7 @@ const unpipe = require('unpipe');
 const destroy = require('destroy');
 const type_is = require('type-is');
 const raw_body = require('raw-body');
+const content_type = require('content-type');
 
 /**
  * @typedef {Object} ParserConditions
@@ -12,6 +13,13 @@ const raw_body = require('raw-body');
  * @property {function():boolean} match_type - A function that returns whether the incoming request should be parsed or not based on content type.
  * @property {function():boolean=} verify_body - A function that returns whether the incoming body should be parsed or not based on the request.
  * @property {String=} base_encoding - The base encoding to use when parsing the incoming body.
+ * @property {Function=} verify_encoding - A function that is used to verify the charset encoding of an incoming request.
+ */
+
+/**
+ * @typedef {Object} BodyAttempt
+ * @property {Buffer} buffer - The buffer containing the body data.
+ * @property {String} charset - The charset encoding of the body data.
  */
 
 /**
@@ -44,30 +52,35 @@ function validate_request(request, conditions) {
  * @param {HyperExpress.Request} request
  * @param {HyperExpress.Response} response
  * @param {ParserConditions} conditions
- * @returns {Promise<Buffer|undefined>}
+ * @returns {Promise<BodyAttempt|undefined>}
  */
-async function attempt_body_buffer(request, response, conditions) {
+async function attempt_body(request, response, conditions) {
     // Destructure appropriate properties from the conditions object
-    const { inflate, limit, verify_body, base_encoding } = conditions;
+    const { inflate, limit, verify_body, base_encoding, verify_encoding } = conditions;
 
-    // Determine content properties from the request
-    const encoding = (request.headers['content-encoding'] || 'identity').toLowerCase();
+    // Determine content encoding from the request headers
+    const content_encoding = (request.headers['content-encoding'] || 'identity').toLowerCase();
 
-    // Return an HTTP 415 error as decompression of the incoming encoding is not supported
-    if (inflate === false && encoding !== 'identity') return response.status(415).send();
+    // Determine the request encoding from the content-type header with a fallback to the base encoding
+    const request_encoding = content_type.parse(request.headers['content-type']).parameters.charset || base_encoding;
+
+    // Return an HTTP 415 error if we receive an unsupported compression or charset encoding
+    const bad_encoding = verify_encoding ? !verify_encoding(request_encoding) : false;
+    const bad_compression = inflate === false && content_encoding !== 'identity';
+    if (bad_encoding || bad_compression) return response.status(415).send();
 
     // Attempt to stream the incoming body from HyperExpress with the provided conditional limit
     if (request._stream_with_limit(limit)) {
         // Read the incoming body data into a buffer
         let buffer;
-        if (encoding === 'identity') {
+        if (content_encoding === 'identity') {
             // Retrieve the raw body buffer directly from HyperExpress
             // This is more memory efficient than consuming/processing the chunks from the request stream
             buffer = await request.buffer();
         } else {
             // Initialize a decompression stream which will decompress the incoming body data
             let stream;
-            switch (encoding) {
+            switch (content_encoding) {
                 case 'deflate':
                     // Create a deflate decompression stream and pipe the request stream into it
                     stream = zlib.createInflate();
@@ -126,23 +139,26 @@ async function attempt_body_buffer(request, response, conditions) {
         }
 
         // Verify the received buffer against the provided verify_body function
-        if (typeof verify_body == 'function' && verify_body(request, response, buffer, encoding) !== true) {
+        if (typeof verify_body == 'function' && verify_body(request, response, buffer, content_encoding) !== true) {
             // Return an HTTP 403 error as the body verification failed
             return response.status(403).send();
         }
 
         // Decode the buffer from the provided base encoding
-        if (base_encoding) {
+        if (request_encoding) {
             try {
                 // Attempt to decode the buffer from the provided base encoding with the iconv-lite module
-                buffer = iconv.decode(buffer, base_encoding);
+                buffer = iconv.decode(buffer, request_encoding);
             } catch (error) {
                 // Return an HTTP 400 error as the encoding parsing failed
                 return response.status(400).send();
             }
         }
 
-        return buffer;
+        return {
+            buffer,
+            charset: request_encoding,
+        };
     } else {
         // Hold execution till we have successfully ended the request with a 413 status code
         await new Promise((resolve) =>
@@ -161,5 +177,5 @@ async function attempt_body_buffer(request, response, conditions) {
 
 module.exports = {
     validate_request,
-    attempt_body_buffer,
+    attempt_body,
 };
