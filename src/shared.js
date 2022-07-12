@@ -58,16 +58,22 @@ async function attempt_body(request, response, conditions) {
     // Destructure appropriate properties from the conditions object
     const { inflate, limit, verify_body, base_encoding, verify_encoding } = conditions;
 
-    // Determine content encoding from the request headers
-    const content_encoding = (request.headers['content-encoding'] || 'identity').toLowerCase();
+    // Determine various content properties about the incoming request
+    const request_type = request.headers['content-type'];
+    const request_encoding = request.headers['content-encoding'];
+    const content_charset = content_type.parse(request_type).parameters.charset || base_encoding;
+    const content_encoding = (request_encoding || 'identity').toLowerCase();
 
-    // Determine the request encoding from the content-type header with a fallback to the base encoding
-    const request_encoding = content_type.parse(request.headers['content-type']).parameters.charset || base_encoding;
-
-    // Return an HTTP 415 error if we receive an unsupported compression or charset encoding
-    const bad_encoding = verify_encoding ? !verify_encoding(request_encoding) : false;
+    // Determine if the request has unsupported encoding or compression
+    const bad_encoding = verify_encoding ? !verify_encoding(content_charset) : false;
     const bad_compression = inflate === false && content_encoding !== 'identity';
-    if (bad_encoding || bad_compression) return response.status(415).send();
+    if (bad_encoding || bad_compression) {
+        // Return an HTTP 415 error as the encoding or compression is not supported
+        response.status(415).send();
+
+        // Prevent further execution of this function with an undefined result value
+        return;
+    }
 
     // Attempt to stream the incoming body from HyperExpress with the provided conditional limit
     if (request._stream_with_limit(limit)) {
@@ -93,7 +99,10 @@ async function attempt_body(request, response, conditions) {
                     break;
                 default:
                     // Return an HTTP 415 error as the encoding is not supported
-                    return response.status(415).send();
+                    response.status(415).send();
+
+                    // Prevent further execution of this function with an undefined result value
+                    return;
             }
 
             // Read the decompression stream into a buffer
@@ -130,44 +139,55 @@ async function attempt_body(request, response, conditions) {
                 switch (error.type) {
                     case 'encoding.unsupported':
                         // Return an HTTP 415 error as the encoding is not supported
-                        return response.status(415).send();
+                        response.status(415).send();
                     default:
                         // Return an HTTP 400 error as this is a bad request according to raw-body module
-                        return response.status(400).send();
+                        response.status(400).send();
                 }
+
+                // Prevent further execution of this function with an undefined result value
+                return;
             }
         }
 
         // Verify the received buffer against the provided verify_body function
         if (typeof verify_body == 'function' && verify_body(request, response, buffer, content_encoding) !== true) {
             // Return an HTTP 403 error as the body verification failed
-            return response.status(403).send();
+            response.status(403).send();
+
+            // Prevent further execution of this function with an undefined result value
+            return;
         }
 
         // Decode the buffer from the provided base encoding
-        if (request_encoding) {
+        if (content_charset) {
             try {
                 // Attempt to decode the buffer from the provided base encoding with the iconv-lite module
-                buffer = iconv.decode(buffer, request_encoding);
+                buffer = iconv.decode(buffer, content_charset);
             } catch (error) {
-                // Return an HTTP 400 error as the encoding parsing failed
-                return response.status(400).send();
+                // Return an HTTP 400 error as the content decoding failed
+                response.status(400).send();
+
+                // Prevent further execution of this function with an undefined result value
+                return;
             }
         }
 
+        // Return the parsed buffer and its encoding charset
         return {
             buffer,
-            charset: request_encoding,
+            charset: content_charset,
         };
     } else {
         // Hold execution till we have successfully ended the request with a 413 status code
         await new Promise((resolve) =>
             request.on('limit', (bytes, flushed) => {
                 // Ensure the body has been completely flushed
-                // Ensure the response has not already been initiated
-                if (flushed && !response.initiated) {
+                if (flushed) {
                     // Send an HTTP 413 status code to the client signifying that the request body is too large
-                    response.status(413).send();
+                    if (!response.initiated) response.status(413).send();
+
+                    // Resolve the promise to resume execution
                     resolve();
                 }
             })
