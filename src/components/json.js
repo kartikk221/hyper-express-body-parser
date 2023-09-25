@@ -56,7 +56,7 @@ function create_json_parser(options = {}) {
                 const { buffer, charset } = attempt;
 
                 // Convert to the string version of the buffer with the appropriate charset
-                const string = buffer.toString(charset || defaultCharset);
+                const string = buffer.toString(charset);
 
                 // Iif strict parsing is enabled and the text does not begin with a valid Array/Object character, send a 400 HTTP Response
                 if (strict === true && string[0] !== '{' && string[0] !== '[') return response.status(400).send();
