@@ -140,9 +140,11 @@ async function attempt_body(request, response, conditions) {
                     case 'encoding.unsupported':
                         // Return an HTTP 415 error as the encoding is not supported
                         response.status(415).send();
+                        break;
                     default:
                         // Return an HTTP 400 error as this is a bad request according to raw-body module
                         response.status(400).send();
+                        break;
                 }
 
                 // Prevent further execution of this function with an undefined result value
